@@ -1,0 +1,13 @@
+# Ignore build output folders
+/Debug/
+/Release/
+
+# Ignore STM32CubeIDE metadata caches
+/.settings/
+/.metadata/
+/.project
+/.cproject
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
