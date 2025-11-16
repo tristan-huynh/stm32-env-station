@@ -8,6 +8,9 @@
 /.project
 /.cproject
 
+# Ignore vendor drivers
+/Drivers/
+
 # Ignore OS-specific files
 .DS_Store
 Thumbs.db

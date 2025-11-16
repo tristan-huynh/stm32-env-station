@@ -21,7 +21,13 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "dht22.h"
+#include "rgb_led.h"
+#include <stdio.h>
+#include <string.h>
 
+#include "ssd1306.h"
+#include "ssd1306_fonts.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -98,7 +104,50 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  // HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  HAL_TIM_Base_Start(&htim3);
 
+  RGB_Init();
+
+  // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 32768); // 50% duty cycle
+
+  // HAL_GPIO_WritePin(OLED_RST_PORT, OLED_RST_PIN, GPIO_PIN_RESET);
+  // HAL_Delay(10);
+  // HAL_GPIO_WritePin(OLED_RST_PORT, OLED_RST_PIN, GPIO_PIN_SET);
+  // HAL_Delay(100);
+  uint8_t found_devices = 0;
+  for(uint8_t addr = 0; addr < 128; addr++) {
+      if (HAL_I2C_IsDeviceReady(&hi2c1, (addr << 1), 3, 100) == HAL_OK) {
+          // Device found - blink green once
+          RGB_SetRGB(0, 255, 0);
+          HAL_Delay(500);
+          RGB_SetRGB(0, 0, 0);
+          HAL_Delay(500);
+          found_devices++;
+      }
+  }
+  if (found_devices == 0) {
+      for(int i = 0; i < 5; i++) {
+          RGB_SetRGB(255, 0, 0);
+          HAL_Delay(200);
+          RGB_SetRGB(0, 0, 0);
+          HAL_Delay(200);
+      }
+  }
+
+  ssd1306_Init();
+  ssd1306_Fill(Black);
+  ssd1306_SetCursor(10, 0);
+  ssd1306_WriteString("DHT22 Monitor", Font_7x10, White);
+  ssd1306_UpdateScreen();
+  HAL_Delay(2000);
+  HAL_Delay(2000);
+
+  // HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);    // IN1 = HIGH PC7
+  // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);  // IN2 = LOW PA9 
+
+  // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);   // EN = HIGH PA11
+  static uint8_t led_state = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -108,7 +157,43 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    float temperature = 0.0f;
+    float humidity = 0.0f;
+    char buffer[32];
+
+    // all is testing
+    
+    DHT22_ReadData(&temperature, &humidity);
+
+    ssd1306_Fill(Black);
+    ssd1306_SetCursor(5, 0);
+    ssd1306_WriteString("DHT22 Sensor", Font_7x10, White);
+
+  
+    if (temperature != -1.0f && humidity != -1.0f) {
+      ssd1306_SetCursor(0, 20);
+      sprintf(buffer, "Temp: %.1fC", temperature);
+      ssd1306_WriteString(buffer, Font_7x10, White);
+      ssd1306_SetCursor(0, 35);
+      sprintf(buffer, "Humid: %.1f%%", humidity);
+      ssd1306_WriteString(buffer, Font_7x10, White);
+    } else {
+      ssd1306_SetCursor(10, 25);
+    
+      ssd1306_WriteString("Read Error!", Font_7x10, White);
+    }
+
+    ssd1306_UpdateScreen();
+    if (led_state == 0) {
+        RGB_SetRGB(255, 0, 255);  
+        led_state = 1;
+    } else {
+        RGB_SetRGB(0, 0, 0);    
+        led_state = 0;
+    }
+    HAL_Delay(2000);
   }
+  
   /* USER CODE END 3 */
 }
 
@@ -208,7 +293,7 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 0;
+  htim3.Init.Prescaler = 31;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -290,7 +375,7 @@ static void MX_GPIO_Init(void)
                           |GPIO_PIN_9, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10|GPIO_PIN_4, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10|GPIO_PIN_4|GPIO_PIN_6, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
@@ -301,17 +386,15 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA5 PA6 PA7 PA8
-                           PA9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8
-                          |GPIO_PIN_9;
+  /*Configure GPIO pins : PA5 PA6 PA7 PA9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB10 PB4 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_4;
+  /*Configure GPIO pins : PB10 PB4 PB6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_4|GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -324,14 +407,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  /*Configure GPIO pin : PA8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
+  GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;        // Alternate Function Open Drain
+  GPIO_InitStruct.Pull = GPIO_NOPULL;            // External pull-ups (you have 5k)
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;     // I2C1 alternate function
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
