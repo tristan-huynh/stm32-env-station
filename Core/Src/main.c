@@ -54,6 +54,13 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
+uint8_t fan_status = 0;
+uint8_t temperature_threshold = 20; 
+uint8_t humidity_threshold = 50;
+uint8_t fan_speed = 0; // 0-100%
+uint8_t alert_condition = 0; // 0 = no alert, 1 = temp alert, 2 = humidity alert
+uint8_t led_state = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -108,13 +115,9 @@ int main(void)
   HAL_TIM_Base_Start(&htim3);
 
   RGB_Init();
-
-  // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 32768); // 50% duty cycle
-
-  // HAL_GPIO_WritePin(OLED_RST_PORT, OLED_RST_PIN, GPIO_PIN_RESET);
-  // HAL_Delay(10);
-  // HAL_GPIO_WritePin(OLED_RST_PORT, OLED_RST_PIN, GPIO_PIN_SET);
-  // HAL_Delay(100);
+  DHT22_Init(&htim3);
+  
+  // TODO: Remove when done debugging
   uint8_t found_devices = 0;
   for(uint8_t addr = 0; addr < 128; addr++) {
       if (HAL_I2C_IsDeviceReady(&hi2c1, (addr << 1), 3, 100) == HAL_OK) {
@@ -136,18 +139,15 @@ int main(void)
   }
 
   ssd1306_Init();
-  ssd1306_Fill(Black);
-  ssd1306_SetCursor(10, 0);
-  ssd1306_WriteString("DHT22 Monitor", Font_7x10, White);
-  ssd1306_UpdateScreen();
-  HAL_Delay(2000);
   HAL_Delay(2000);
 
-  // HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);    // IN1 = HIGH PC7
-  // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);  // IN2 = LOW PA9 
+  // initalize motor controller code
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);    // IN1 = HIGH PC7
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);  // IN2 = LOW PA9 
 
   // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);   // EN = HIGH PA11
-  static uint8_t led_state = 0;
+
+  uint8_t screen = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -160,38 +160,87 @@ int main(void)
     float temperature = 0.0f;
     float humidity = 0.0f;
     char buffer[32];
-
-    // all is testing
     
     DHT22_ReadData(&temperature, &humidity);
 
-    ssd1306_Fill(Black);
-    ssd1306_SetCursor(5, 0);
-    ssd1306_WriteString("DHT22 Sensor", Font_7x10, White);
-
-  
-    if (temperature != -1.0f && humidity != -1.0f) {
-      ssd1306_SetCursor(0, 20);
-      sprintf(buffer, "Temp: %.1fC", temperature);
-      ssd1306_WriteString(buffer, Font_7x10, White);
-      ssd1306_SetCursor(0, 35);
-      sprintf(buffer, "Humid: %.1f%%", humidity);
-      ssd1306_WriteString(buffer, Font_7x10, White);
-    } else {
-      ssd1306_SetCursor(10, 25);
-    
-      ssd1306_WriteString("Read Error!", Font_7x10, White);
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_RESET) {
+      screen++;
+      if (screen > 4) {
+        screen = 0;
+      }
+    }
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_RESET) {
+      screen--;
+      if (screen > 4) {
+        screen = 4;
+      }
     }
 
+    if (alert_condition == 1) {
+      RGB_SetRGB(255, 0, 0); // red for temperature alerta
+    } else {
+      RGB_SetRGB(0, 255, 0); // green for normal
+    }
+
+    if (screen == 0) {
+      ssd1306_Fill(Black);
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("Default; 1", Font_7x10, White);
+
+      if (temperature != -999.0f && humidity != -999.0f) {
+        // use integers for display 
+        int temp_int = (int)temperature;
+        int temp_dec = (int)((temperature - temp_int) * 10);
+        int hum_int = (int)humidity;
+        int hum_dec = (int)((humidity - hum_int) * 10);
+
+        ssd1306_SetCursor(0, 15);
+        sprintf(buffer, "Temp: %d.%dC", temp_int, temp_dec);
+        ssd1306_WriteString(buffer, Font_7x10, White);
+        
+        ssd1306_SetCursor(0, 30);
+        sprintf(buffer, "Humid: %d.%d%%", hum_int, hum_dec);
+        ssd1306_WriteString(buffer, Font_7x10, White);
+
+        ssd1306_SetCursor(0, 45);
+        sprintf(buffer, "Fan Status: %d RPM", fan_speed);
+        ssd1306_WriteString(buffer, Font_7x10, White);
+      }
+    } else if (screen == 2) {
+      ssd1306_Fill(Black);
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("Temperature; 2", Font_7x10, White);
+      // create graph using bars for temperature
+      for (int i = 0; i < 10; i++) {
+        if (temperature >= i * 10) {
+          for (int j = 0; j < 5; j++) {
+            ssd1306_SetCursor(i * 6, 15 + (4 - j) * 10);
+            ssd1306_WriteString("|", Font_7x10, White);
+          }
+        }
+      }
+
+    } else if (screen == 3) {
+      ssd1306_Fill(Black);
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("Humidity; 3", Font_7x10, White);
+      // create graph using bars for humidity
+      for (int i = 0; i < 10; i++) {
+        if (humidity >= i * 10) {
+          for (int j = 0; j < 5; j++) {
+            ssd1306_SetCursor(i * 6, 15 + (4 - j) * 10);
+            ssd1306_WriteString("|", Font_7x10, White);
+          }
+        }
+      }
+    } else if (screen == 4) {
+      ssd1306_Fill(Black);
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("Fan Control; 4", Font_7x10, White);
+      // Code for fan control would go here 
+    }
     ssd1306_UpdateScreen();
-    if (led_state == 0) {
-        RGB_SetRGB(255, 0, 255);  
-        led_state = 1;
-    } else {
-        RGB_SetRGB(0, 0, 0);    
-        led_state = 0;
-    }
-    HAL_Delay(2000);
+    HAL_Delay(100);
   }
   
   /* USER CODE END 3 */
