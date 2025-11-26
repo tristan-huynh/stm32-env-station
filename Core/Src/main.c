@@ -279,45 +279,40 @@ int main(void)
         ssd1306_WriteString(buffer, Font_7x10, White);
       }
     } else if (screen == 2) {
-    // Update history buffer
-    temp_history[history_index] = temperature;
-    history_index = (history_index + 1) % GRAPH_HISTORY;
-    
-    ssd1306_Fill(Black);
-    
-    // Title with unit
-    ssd1306_SetCursor(0, 0);
-    ssd1306_WriteString("2", Font_6x8, White);
-    ssd1306_SetCursor(18, 0);
-    ssd1306_WriteString("Temperature (C)", Font_7x10, White);
-    
-    // Draw graph with Y-axis labels
-    drawLineGraph(temp_history, GRAPH_HISTORY, 12, 50, 10.0f, 40.0f);
-    
-    // Show current value
-    sprintf(buffer, "%.1f", temperature);
-    ssd1306_SetCursor(100, 0);
-    ssd1306_WriteString(buffer, Font_7x10, White);
+      temp_history[history_index] = temperature;
+      history_index = (history_index + 1) % GRAPH_HISTORY;
+      
+      ssd1306_Fill(Black);
+      
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("2", Font_6x8, White);
+      ssd1306_SetCursor(18, 0);
+      ssd1306_WriteString("Temperature (C)", Font_7x10, White);
+      drawLineGraph(temp_history, GRAPH_HISTORY, 12, 50, 10.0f, 40.0f);
+      int temp_int = (int)temperature;
+      int temp_dec = (int)((temperature - temp_int) * 10);
+      ssd1306_SetCursor(100, 0);
+      sprintf(buffer, "%d.%d%%", temp_int, temp_dec);
+      ssd1306_WriteString(buffer, Font_7x10, White);
     } else if (screen == 3) {
-    humid_history[humid_index] = humidity;
-    humid_index = (humid_index + 1) % GRAPH_HISTORY;
-    
-    ssd1306_Fill(Black);
-    
-    // Title with unit
-    ssd1306_SetCursor(0, 0);
-    ssd1306_WriteString("3", Font_6x8, White);
+      humid_history[humid_index] = humidity;
+      humid_index = (humid_index + 1) % GRAPH_HISTORY;
+      
+      ssd1306_Fill(Black);
+      
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("3", Font_6x8, White);
 
-    ssd1306_SetCursor(18, 0);
-    ssd1306_WriteString("Humidity (%)", Font_7x10, White);
-    // Draw graph with Y-axis labels
-    drawLineGraph(humid_history, GRAPH_HISTORY, 12, 50, 0.0f, 100.0f);
-    
-    // Show current value
-    sprintf(buffer, "%.1f", humidity);
-    ssd1306_SetCursor(100, 0);
-    ssd1306_WriteString(buffer, Font_7x10, White);
- } else if (screen == 4) {
+      ssd1306_SetCursor(18, 0);
+      ssd1306_WriteString("Humidity (%)", Font_7x10, White);
+      drawLineGraph(humid_history, GRAPH_HISTORY, 12, 50, 0.0f, 100.0f);
+        int hum_int = (int)humidity;
+        int hum_dec = (int)((humidity - hum_int) * 10);
+
+      ssd1306_SetCursor(100, 0);
+      sprintf(buffer, "%d.%d%%", hum_int, hum_dec);
+      ssd1306_WriteString(buffer, Font_7x10, White);
+    } else if (screen == 4) {
       ssd1306_Fill(Black);
       ssd1306_SetCursor(0, 0);
       ssd1306_WriteString("4", Font_6x8, White);
@@ -332,10 +327,8 @@ int main(void)
       sprintf(buffer, "Status: ON");
       ssd1306_WriteString(buffer, Font_7x10, White);
       
-      // Turn fan on at full speed
-      FAN_setSpeed(100);  // Any non-zero value will turn it on
-      
-      // Show pin states for debugging
+      FAN_setSpeed(100);  
+
       ssd1306_SetCursor(0, 45);
       sprintf(buffer, "PA5:%d PA6:%d", 
               HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5),
