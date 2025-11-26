@@ -311,7 +311,7 @@ int main(void)
 
       ssd1306_SetCursor(100, 0);
       sprintf(buffer, "%d.%d%%", hum_int, hum_dec);
-      ssd1306_WriteString(buffer, Font_7x10, White);
+      ssd1306_WriteString(buffer, Font_6x8, White);
     } else if (screen == 4) {
       ssd1306_Fill(Black);
       ssd1306_SetCursor(0, 0);
