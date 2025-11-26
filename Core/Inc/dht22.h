@@ -4,7 +4,6 @@
 #include "main.h"
 #include <stdint.h>
 
-// DHT22 connected to PA8
 #define DHT22_PORT GPIOA
 #define DHT22_PIN GPIO_PIN_8
 

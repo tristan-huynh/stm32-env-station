@@ -1,6 +1,6 @@
 #include "dht22.h"
 
-// local handler
+// local tim handler
 static TIM_HandleTypeDef *dht22_timer = NULL;
 
 // initalize w/hardware timer
@@ -34,7 +34,7 @@ static void DHT22_SetPinInput(void) {
     HAL_GPIO_Init(DHT22_PORT, &GPIO_InitStruct);
 }
 
-// Send start signal to DHT22
+// send start signal to DHT22
 static void DHT22_Start(void) {
     DHT22_SetPinOutput();
     HAL_GPIO_WritePin(DHT22_PORT, DHT22_PIN, GPIO_PIN_SET);   // Start high
@@ -44,20 +44,20 @@ static void DHT22_Start(void) {
     
     DHT22_SetPinInput(); // Release pin (pull-up will pull it high)
 }
-// Read one byte from DHT22
+// read one byte from DHT22
 uint8_t DHT22_ReadByte(void) {
     uint8_t byte = 0;
     uint16_t timeout;
     
     for (int i = 0; i < 8; i++) {
-        // Wait for the pin to go high (start of bit transmission, ~50us low)
+        // wait for the pin to go high (start of bit transmission, ~50us low)
         timeout = 0;
         while (HAL_GPIO_ReadPin(DHT22_PORT, DHT22_PIN) == GPIO_PIN_RESET) {
             delay_us(1);
-            if (++timeout > 100) return 0; // Timeout
+            if (++timeout > 100) return 0;
         }
         
-        // Wait 30us to check if bit is 0 or 1
+        // wait 30us to check if bit is 0 or 1
         delay_us(30);
         
         // If pin is still high, it's a '1' (70us high), otherwise it's a '0' (26-28us high)
@@ -65,11 +65,11 @@ uint8_t DHT22_ReadByte(void) {
             byte |= (1 << (7 - i)); // Set bit
         }
         
-        // Wait for pin to go low (end of bit transmission)
+        // wait for pin to go low (end of bit transmission)
         timeout = 0;
         while (HAL_GPIO_ReadPin(DHT22_PORT, DHT22_PIN) == GPIO_PIN_SET) {
             delay_us(1);
-            if (++timeout > 100) return 0; // Timeout
+            if (++timeout > 100) return 0;
         }
     }
     
@@ -95,7 +95,7 @@ void DHT22_ReadData(float* temperature, float* humidity) {
         if (++timeout > 100) {
             *temperature = -999.0f;
             *humidity = -999.0f;
-            return; // timeout waiting for response
+            return;
         }
     }
 
@@ -106,7 +106,7 @@ void DHT22_ReadData(float* temperature, float* humidity) {
         if (++timeout > 100) {
             *temperature = -999.0f;
             *humidity = -999.0f;
-            return; // timeout if the response response low
+            return;
         }
     }
 
@@ -117,7 +117,7 @@ void DHT22_ReadData(float* temperature, float* humidity) {
         if (++timeout > 100) {
             *temperature = -999.0f;
             *humidity = -999.0f;
-            return; // timeout if response is high
+            return;
         }
     }
     
