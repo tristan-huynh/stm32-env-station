@@ -65,8 +65,12 @@ uint8_t temperature_threshold = 20;
 uint8_t humidity_threshold = 50;
 uint8_t fan_speed = 0; // 0-100%
 uint8_t alert_condition = 0; // 0 = no alert, 1 = temp alert, 2 = humidity alert
+uint8_t alert__temp_threshold = 30;
+uint8_t alert__humid_threshold = 30; 
 uint8_t led_state = 0;
 
+uint32_t last_serial_transmission = 0;
+#define SERIAL_INTERVAL 5000 // 5 sconds
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -88,44 +92,42 @@ void drawLineGraph(float* data, uint8_t length, uint8_t y_offset, uint8_t graph_
     
     // x-axis
     for(int i = y_axis_x; i < 128; i++) {
-        ssd1306_DrawPixel(i, x_axis_y, White);
+      ssd1306_DrawPixel(i, x_axis_y, White);
     }
     
     // y-axis
     for(int i = y_offset; i < y_offset + graph_height; i++) {
-        ssd1306_DrawPixel(y_axis_x, i, White);
+      ssd1306_DrawPixel(y_axis_x, i, White);
     }
 
     char label[6];
     uint8_t num_ticks = 5;
     
     for(uint8_t i = 0; i < num_ticks; i++) {
-        float value = max_val - (i * (max_val - min_val) / (num_ticks - 1));
-        uint8_t tick_y = y_offset + (i * (graph_height - 1) / (num_ticks - 1));
-        
-        // Draw tick mark
-        ssd1306_Line(y_axis_x - 2, tick_y, y_axis_x, tick_y, White);
-        
-        // Convert to integer for consistent formatting with your main display
-        int value_int = (int)value;
-        sprintf(label, "%d", value_int);  // Use %d for integer formatting
-        
-        // Ensure label doesn't go above screen bounds
-        uint8_t label_y = tick_y;
-        if (label_y < 4) label_y = 4;
-        if (label_y > 60) label_y = 60;
-        
-        ssd1306_SetCursor(0, label_y - 4);
-        ssd1306_WriteString(label, Font_6x8, White);
+      float value = max_val - (i * (max_val - min_val) / (num_ticks - 1));
+      uint8_t tick_y = y_offset + (i * (graph_height - 1) / (num_ticks - 1));
+      
+      // draw tick mark
+      ssd1306_Line(y_axis_x - 2, tick_y, y_axis_x, tick_y, White);
+      
+      int value_int = (int)value;
+      sprintf(label, "%d", value_int); 
+      
+      // ensure label doesn't go above screen bounds
+      uint8_t label_y = tick_y;
+      if (label_y < 4) label_y = 4;
+      if (label_y > 60) label_y = 60;
+      
+      ssd1306_SetCursor(0, label_y - 4);
+      ssd1306_WriteString(label, Font_6x8, White);
     }
     
     // Calculate X scaling
     float x_scale = (128.0f - y_axis_x - 1) / (length - 1);
     
-    // Draw data points - only if we have valid data
+    // only if we have valid data
     for(int i = 0; i < length - 1; i++) {
-        // Skip drawing if data is zero (uninitialized)
-        if (data[i] == 0.0f && data[i+1] == 0.0f) continue;
+        if (data[i] == 0.0f && data[i+1] == 0.0f) continue; // skip if no data
         
         uint8_t y1 = y_offset + graph_height - 2 - (uint8_t)((data[i] - min_val) / (max_val - min_val) * (graph_height - 3));
         uint8_t y2 = y_offset + graph_height - 2 - (uint8_t)((data[i+1] - min_val) / (max_val - min_val) * (graph_height - 3));
@@ -143,7 +145,13 @@ void drawLineGraph(float* data, uint8_t length, uint8_t y_offset, uint8_t graph_
     }
 }
 
+void sendDataUART(float temperature, float humidity, uint8_t fan_status, uint8_t alert_condition) {
+  char tx_buffer[256];
+  uint32_t timestamp = HAL_GetTick(); 
+  sprintf(tx_buffer, "{\"timestamp\":%lu,\"temperature\":%.2f,\"humidity\":%.2f,\"fan_status\":%d,\"alert_condition\":%d}\r\n", timestamp, temperature, humidity, fan_status, alert_condition);
 
+  HAL_UART_Transmit(&huart2, (uint8_t*)tx_buffer, strlen(tx_buffer), 1000);
+}
 /* USER CODE END 0 */
 
 /**
@@ -230,8 +238,39 @@ int main(void)
     float temperature = 0.0f;
     float humidity = 0.0f;
     char buffer[32];
-    
+    uint32_t current_time = HAL_GetTick();
+
     DHT22_ReadData(&temperature, &humidity);
+
+    if (temperature > alert__temp_threshold) {
+        alert_condition = 1;
+        fan_status = 1;
+        FAN_setSpeed(1);
+    } else {
+        alert_condition = 0;
+        fan_status = 0;
+        FAN_setSpeed(0);
+    }
+
+    if (humidity > alert__humid_threshold) {
+        alert_condition = 2;
+        fan_status = 1;
+        FAN_setSpeed(1);
+    } else {
+        if (alert_condition != 1) { // only clear if not temp alert
+            alert_condition = 0;
+            fan_status = 0;
+            FAN_setSpeed(0);
+        }
+    }
+
+
+    if (current_time - last_serial_transmission >= SERIAL_INTERVAL) {
+        if (temperature != -999.0f && humidity != -999.0f) {
+            sendDataUART(temperature, humidity, fan_status, alert_condition);
+        }
+        last_serial_transmission = current_time;
+    }
 
     if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_RESET) {
       screen++;
@@ -324,16 +363,12 @@ int main(void)
       ssd1306_WriteString(buffer, Font_7x10, White);
       
       ssd1306_SetCursor(0, 30);
-      sprintf(buffer, "Status: ON");
+      if (fan_status == 1) {
+        sprintf(buffer, "Status: ON");
+      } else {
+        sprintf(buffer, "Status: OFF");
+      }
       ssd1306_WriteString(buffer, Font_7x10, White);
-      
-      FAN_setSpeed(100);  
-
-      ssd1306_SetCursor(0, 45);
-      sprintf(buffer, "PA5:%d PA6:%d", 
-              HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5),
-              HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6));
-      ssd1306_WriteString(buffer, Font_6x8, White);
     }
     ssd1306_UpdateScreen();
     HAL_Delay(100);
