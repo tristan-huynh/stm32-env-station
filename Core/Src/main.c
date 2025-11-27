@@ -28,6 +28,7 @@
 
 #include "ssd1306.h"
 #include "ssd1306_fonts.h"
+#include "fan_control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,7 +54,23 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+#define GRAPH_HISTORY 64  // Number of data points to store
+float temp_history[GRAPH_HISTORY] = {0};
+float humid_history[GRAPH_HISTORY] = {0};
+uint8_t history_index = 0;
+uint8_t humid_index = 0;
 
+uint8_t fan_status = 0;
+uint8_t temperature_threshold = 20; 
+uint8_t humidity_threshold = 50;
+uint8_t fan_speed = 0; // 0-100%
+uint8_t alert_condition = 0; // 0 = no alert, 1 = temp alert, 2 = humidity alert
+uint8_t alert__temp_threshold = 30;
+uint8_t alert__humid_threshold = 30; 
+uint8_t led_state = 0;
+
+uint32_t last_serial_transmission = 0;
+#define SERIAL_INTERVAL 5000 // 5 sconds
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,12 +80,78 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void drawLineGraph(float* data, uint8_t length, uint8_t y_offset, uint8_t graph_height, float min_val, float max_val) {
+    uint8_t y_axis_x = 22;  // Leave 22 pixels for labels
+    uint8_t x_axis_y = y_offset + graph_height - 1;
+    
+    // x-axis
+    for(int i = y_axis_x; i < 128; i++) {
+      ssd1306_DrawPixel(i, x_axis_y, White);
+    }
+    
+    // y-axis
+    for(int i = y_offset; i < y_offset + graph_height; i++) {
+      ssd1306_DrawPixel(y_axis_x, i, White);
+    }
 
+    char label[6];
+    uint8_t num_ticks = 5;
+    
+    for(uint8_t i = 0; i < num_ticks; i++) {
+      float value = max_val - (i * (max_val - min_val) / (num_ticks - 1));
+      uint8_t tick_y = y_offset + (i * (graph_height - 1) / (num_ticks - 1));
+      
+      // draw tick mark
+      ssd1306_Line(y_axis_x - 2, tick_y, y_axis_x, tick_y, White);
+      
+      int value_int = (int)value;
+      sprintf(label, "%d", value_int); 
+      
+      // ensure label doesn't go above screen bounds
+      uint8_t label_y = tick_y;
+      if (label_y < 4) label_y = 4;
+      if (label_y > 60) label_y = 60;
+      
+      ssd1306_SetCursor(0, label_y - 4);
+      ssd1306_WriteString(label, Font_6x8, White);
+    }
+    
+    // Calculate X scaling
+    float x_scale = (128.0f - y_axis_x - 1) / (length - 1);
+    
+    // only if we have valid data
+    for(int i = 0; i < length - 1; i++) {
+        if (data[i] == 0.0f && data[i+1] == 0.0f) continue; // skip if no data
+        
+        uint8_t y1 = y_offset + graph_height - 2 - (uint8_t)((data[i] - min_val) / (max_val - min_val) * (graph_height - 3));
+        uint8_t y2 = y_offset + graph_height - 2 - (uint8_t)((data[i+1] - min_val) / (max_val - min_val) * (graph_height - 3));
+        
+        uint8_t x1 = y_axis_x + (uint8_t)(i * x_scale);
+        uint8_t x2 = y_axis_x + (uint8_t)((i + 1) * x_scale);
+        
+        // Clamp Y values
+        if (y1 < y_offset) y1 = y_offset;
+        if (y1 >= y_offset + graph_height) y1 = y_offset + graph_height - 1;
+        if (y2 < y_offset) y2 = y_offset;
+        if (y2 >= y_offset + graph_height) y2 = y_offset + graph_height - 1;
+        
+        ssd1306_Line(x1, y1, x2, y2, White);
+    }
+}
+
+void sendDataUART(float temperature, float humidity, uint8_t fan_status, uint8_t alert_condition) {
+  char tx_buffer[256];
+  uint32_t timestamp = HAL_GetTick(); 
+  sprintf(tx_buffer, "{\"timestamp\":%lu,\"temperature\":%.2f,\"humidity\":%.2f,\"fan_status\":%d,\"alert_condition\":%d}\r\n", timestamp, temperature, humidity, fan_status, alert_condition);
+
+  HAL_UART_Transmit(&huart2, (uint8_t*)tx_buffer, strlen(tx_buffer), 1000);
+}
 /* USER CODE END 0 */
 
 /**
@@ -108,13 +191,11 @@ int main(void)
   HAL_TIM_Base_Start(&htim3);
 
   RGB_Init();
+  DHT22_Init(&htim3);
+  FAN_Init();
+  
 
-  // __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 32768); // 50% duty cycle
-
-  // HAL_GPIO_WritePin(OLED_RST_PORT, OLED_RST_PIN, GPIO_PIN_RESET);
-  // HAL_Delay(10);
-  // HAL_GPIO_WritePin(OLED_RST_PORT, OLED_RST_PIN, GPIO_PIN_SET);
-  // HAL_Delay(100);
+  // TODO: Remove when done debugging
   uint8_t found_devices = 0;
   for(uint8_t addr = 0; addr < 128; addr++) {
       if (HAL_I2C_IsDeviceReady(&hi2c1, (addr << 1), 3, 100) == HAL_OK) {
@@ -136,18 +217,15 @@ int main(void)
   }
 
   ssd1306_Init();
-  ssd1306_Fill(Black);
-  ssd1306_SetCursor(10, 0);
-  ssd1306_WriteString("DHT22 Monitor", Font_7x10, White);
-  ssd1306_UpdateScreen();
-  HAL_Delay(2000);
   HAL_Delay(2000);
 
+  // initalize motor controller code
   // HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);    // IN1 = HIGH PC7
   // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);  // IN2 = LOW PA9 
 
   // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);   // EN = HIGH PA11
-  static uint8_t led_state = 0;
+
+  uint8_t screen = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -160,38 +238,140 @@ int main(void)
     float temperature = 0.0f;
     float humidity = 0.0f;
     char buffer[32];
+    uint32_t current_time = HAL_GetTick();
 
-    // all is testing
-    
     DHT22_ReadData(&temperature, &humidity);
 
-    ssd1306_Fill(Black);
-    ssd1306_SetCursor(5, 0);
-    ssd1306_WriteString("DHT22 Sensor", Font_7x10, White);
-
-  
-    if (temperature != -1.0f && humidity != -1.0f) {
-      ssd1306_SetCursor(0, 20);
-      sprintf(buffer, "Temp: %.1fC", temperature);
-      ssd1306_WriteString(buffer, Font_7x10, White);
-      ssd1306_SetCursor(0, 35);
-      sprintf(buffer, "Humid: %.1f%%", humidity);
-      ssd1306_WriteString(buffer, Font_7x10, White);
+    if (temperature > alert__temp_threshold) {
+        alert_condition = 1;
+        fan_status = 1;
+        FAN_setSpeed(1);
     } else {
-      ssd1306_SetCursor(10, 25);
-    
-      ssd1306_WriteString("Read Error!", Font_7x10, White);
+        alert_condition = 0;
+        fan_status = 0;
+        FAN_setSpeed(0);
     }
 
+    if (humidity > alert__humid_threshold) {
+        alert_condition = 2;
+        fan_status = 1;
+        FAN_setSpeed(1);
+    } else {
+        if (alert_condition != 1) { // only clear if not temp alert
+            alert_condition = 0;
+            fan_status = 0;
+            FAN_setSpeed(0);
+        }
+    }
+
+
+    if (current_time - last_serial_transmission >= SERIAL_INTERVAL) {
+        if (temperature != -999.0f && humidity != -999.0f) {
+            sendDataUART(temperature, humidity, fan_status, alert_condition);
+        }
+        last_serial_transmission = current_time;
+    }
+
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_RESET) {
+      screen++;
+      if (screen > 4) {
+        screen = 0;
+      }
+    }
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_RESET) {
+      screen--;
+      if (screen > 4) {
+        screen = 4;
+      }
+    }
+
+    if (alert_condition == 1) {
+      RGB_SetRGB(255, 0, 0); // red for temperature alerta
+    } else {
+      RGB_SetRGB(0, 255, 0); // green for normal
+    }
+
+    if (screen == 0) {
+      ssd1306_Fill(Black);
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("1", Font_6x8, White);
+
+      ssd1306_SetCursor(18, 0);
+      ssd1306_WriteString("Current", Font_7x10, White);
+      if (temperature != -999.0f && humidity != -999.0f) {
+        // use integers for display 
+        int temp_int = (int)temperature;
+        int temp_dec = (int)((temperature - temp_int) * 10);
+        int hum_int = (int)humidity;
+        int hum_dec = (int)((humidity - hum_int) * 10);
+
+        ssd1306_SetCursor(0, 15);
+        sprintf(buffer, "Temp: %d.%dC", temp_int, temp_dec);
+        ssd1306_WriteString(buffer, Font_7x10, White);
+        
+        ssd1306_SetCursor(0, 30);
+        sprintf(buffer, "Humid: %d.%d%%", hum_int, hum_dec);
+        ssd1306_WriteString(buffer, Font_7x10, White);
+
+        ssd1306_SetCursor(0, 45);
+        sprintf(buffer, "Fan: %d RPM", fan_speed);
+        ssd1306_WriteString(buffer, Font_6x8, White);
+      }
+    } else if (screen == 2) {
+      temp_history[history_index] = temperature;
+      history_index = (history_index + 1) % GRAPH_HISTORY;
+      
+      ssd1306_Fill(Black);
+      
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("2", Font_6x8, White);
+      ssd1306_SetCursor(18, 0);
+      ssd1306_WriteString("Temp (C)", Font_7x10, White);
+      drawLineGraph(temp_history, GRAPH_HISTORY, 12, 50, 10.0f, 40.0f);
+      int temp_int = (int)temperature;
+      int temp_dec = (int)((temperature - temp_int) * 10);
+      ssd1306_SetCursor(100, 0);
+      sprintf(buffer, "%d.%d%%", temp_int, temp_dec);
+      ssd1306_WriteString(buffer, Font_6x8, White);
+    } else if (screen == 3) {
+      humid_history[humid_index] = humidity;
+      humid_index = (humid_index + 1) % GRAPH_HISTORY;
+      
+      ssd1306_Fill(Black);
+      
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("3", Font_6x8, White);
+
+      ssd1306_SetCursor(18, 0);
+      ssd1306_WriteString("Humid (%)", Font_7x10, White);
+      drawLineGraph(humid_history, GRAPH_HISTORY, 12, 50, 0.0f, 100.0f);
+        int hum_int = (int)humidity;
+        int hum_dec = (int)((humidity - hum_int) * 10);
+
+      ssd1306_SetCursor(100, 0);
+      sprintf(buffer, "%d.%d%%", hum_int, hum_dec);
+      ssd1306_WriteString(buffer, Font_6x8, White);
+    } else if (screen == 4) {
+      ssd1306_Fill(Black);
+      ssd1306_SetCursor(0, 0);
+      ssd1306_WriteString("4", Font_6x8, White);
+      ssd1306_SetCursor(18, 0);
+      ssd1306_WriteString("Fan Control", Font_7x10, White);
+      
+      ssd1306_SetCursor(0, 15);
+      sprintf(buffer, "Speed: %s", "FULL");
+      ssd1306_WriteString(buffer, Font_7x10, White);
+      
+      ssd1306_SetCursor(0, 30);
+      if (fan_status == 1) {
+        sprintf(buffer, "Status: ON");
+      } else {
+        sprintf(buffer, "Status: OFF");
+      }
+      ssd1306_WriteString(buffer, Font_7x10, White);
+    }
     ssd1306_UpdateScreen();
-    if (led_state == 0) {
-        RGB_SetRGB(255, 0, 255);  
-        led_state = 1;
-    } else {
-        RGB_SetRGB(0, 0, 0);    
-        led_state = 0;
-    }
-    HAL_Delay(2000);
+    HAL_Delay(100);
   }
   
   /* USER CODE END 3 */
