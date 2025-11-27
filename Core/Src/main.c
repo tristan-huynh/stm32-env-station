@@ -79,6 +79,9 @@ uint32_t last_data_collection = 0;
 
 uint32_t last_blink_time = 0;
 uint8_t blink_state = 0;
+
+uint8_t led_override = 0; // 0 = normal, 1 = force off
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -218,7 +221,6 @@ int main(void)
   RGB_Init();
   DHT22_Init(&htim3);
   FAN_Init();
-  
 
   // TODO: Remove when done debugging
   uint8_t found_devices = 0;
@@ -287,6 +289,7 @@ int main(void)
         alert_condition = 2; // humidity
         fan_status = 1; // turn on fan
     } else {
+        led_override = 0;
         alert_condition = 0; // no alert
         fan_status = 0; // turn off fan
     }
@@ -305,7 +308,7 @@ int main(void)
       if (screen > 4) {
         screen = 0;
       }
-    }
+    } 
     if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_RESET) {
       screen--;
       if (screen > 4) {
@@ -313,16 +316,30 @@ int main(void)
       }
     }
 
-    if (alert_condition > 0 && blink_state) {
-      // if (alert_condition == 3 && blink_state) {
-      // } else 
-      RGB_SetRGB(255, 0, 0); // red when blinking on
-    } else if (alert_condition > 0 && !blink_state) {
-      RGB_Off(); // off when blinking off
-    } else {
-      RGB_SetRGB(0, 255, 0); // green for normal
+    if ((HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_SET && HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_SET) && alert_condition > 0) {
+      led_override = 1; // turn off LED
     }
 
+    if (led_override == 1) {
+       RGB_Off();
+    } else {
+      if (alert_condition > 0 && blink_state) {
+        // if (alert_condition == 3 && blink_state) {
+        // } else 
+        RGB_SetRGB(255, 0, 0); // red when blinking on
+      } else if (alert_condition > 0 && !blink_state) {
+        RGB_Off(); // off when blinking off
+      } else {
+        RGB_SetRGB(0, 255, 0); // green for normal
+      }
+    }
+
+    // fan control
+    if (fan_status == 1) {
+      FAN_setSpeed(1); // full speed
+    } else {
+      FAN_setSpeed(0); // off
+    }
 
     // screen displays
     if (screen == 0) {
