@@ -7,8 +7,8 @@
 // #define DHT22_PORT GPIOA
 // #define DHT22_PIN GPIO_PIN_8
 
-#define DHT22_PORT GPIOA
-#define DHT22_PIN GPIO_PIN_10
+#define DHT22_PORT GPIOB
+#define DHT22_PIN GPIO_PIN_3
 void DHT22_Init(TIM_HandleTypeDef *htim);
 void DHT22_ReadData(float* temperature, float* humidity);
 

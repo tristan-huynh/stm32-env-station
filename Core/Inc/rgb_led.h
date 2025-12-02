@@ -12,14 +12,14 @@
 // #define RGB_GREEN_PORT  GPIOA
 // #define RGB_GREEN_PIN   GPIO_PIN_9   // D8
 
-#define RGB_RED_PORT    GPIOA
-#define RGB_RED_PIN     GPIO_PIN_6   // D12
+#define RGB_RED_PORT    GPIOB
+#define RGB_RED_PIN     GPIO_PIN_6   // D10
 
 #define RGB_BLUE_PORT   GPIOA
 #define RGB_BLUE_PIN    GPIO_PIN_5   // D13
 
-#define RGB_GREEN_PORT  GPIOB
-#define RGB_GREEN_PIN   GPIO_PIN_6   // D10
+#define RGB_GREEN_PORT  GPIOA
+#define RGB_GREEN_PIN   GPIO_PIN_6   // D12
 // Anode (1) or Cathode (0)
 #define RGB_COMMON_ANODE 0 // normally 0
 
