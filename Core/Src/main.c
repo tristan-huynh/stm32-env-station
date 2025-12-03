@@ -1,20 +1,4 @@
 /* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -33,17 +17,14 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -54,23 +35,35 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-#define GRAPH_HISTORY 64  // Number of data points to store
+#define GRAPH_HISTORY 120  // Number of data points to store
+#define SERIAL_INTERVAL 30000 // 5 sconds
+#define DATA_COLLECTION_INERVAL 30000 // 5 seconds
+#define BLINK_INTERVAL 500  // 500ms blink interval
+
+#define ALERT_TEMPERATURE_THRESHOLD 25.0f
+#define ALERT_HUMIDITY_THRESHOLD 50.0f
+
 float temp_history[GRAPH_HISTORY] = {0};
 float humid_history[GRAPH_HISTORY] = {0};
-uint8_t history_index = 0;
+uint8_t temp_index = 0;
 uint8_t humid_index = 0;
 
 uint8_t fan_status = 0;
 uint8_t temperature_threshold = 20; 
 uint8_t humidity_threshold = 50;
-uint8_t fan_speed = 0; // 0-100%
+uint8_t fan_speed = 0; // 0-100% // might need to be removed
 uint8_t alert_condition = 0; // 0 = no alert, 1 = temp alert, 2 = humidity alert
-uint8_t alert__temp_threshold = 30;
-uint8_t alert__humid_threshold = 30; 
 uint8_t led_state = 0;
 
 uint32_t last_serial_transmission = 0;
-#define SERIAL_INTERVAL 5000 // 5 sconds
+uint32_t last_data_collection = 0;
+
+uint32_t last_blink_time = 0;
+uint8_t blink_state = 0;
+
+uint8_t led_override = 0; // 0 = normal, 1 = force off
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -80,8 +73,6 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
-void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim);
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -148,9 +139,26 @@ void drawLineGraph(float* data, uint8_t length, uint8_t y_offset, uint8_t graph_
 void sendDataUART(float temperature, float humidity, uint8_t fan_status, uint8_t alert_condition) {
   char tx_buffer[256];
   uint32_t timestamp = HAL_GetTick(); 
-  sprintf(tx_buffer, "{\"timestamp\":%lu,\"temperature\":%.2f,\"humidity\":%.2f,\"fan_status\":%d,\"alert_condition\":%d}\r\n", timestamp, temperature, humidity, fan_status, alert_condition);
+  int temp_int = (int)temperature;
+  int temp_dec = (int)((temperature - temp_int) * 100);
+  int humid_int = (int)humidity;
+  int humid_dec = (int)((humidity - humid_int) * 100);
+
+  sprintf(tx_buffer, "{\"timestamp\":%lu,\"temperature\":%d.%02d,\"humidity\":%d.%02d,\"fan_status\":%d,\"alert_condition\":%d}\r\n", 
+    timestamp, temp_int, temp_dec, humid_int, humid_dec, fan_status, alert_condition);
+
 
   HAL_UART_Transmit(&huart2, (uint8_t*)tx_buffer, strlen(tx_buffer), 1000);
+}
+
+void collectSensorData(float temperature, float humidity) {
+  if (temperature != -999.0f && humidity != -999.0f) {
+  
+    temp_history[temp_index] = temperature;
+    humid_history[humid_index] = humidity;
+  }
+  temp_index = (temp_index + 1) % GRAPH_HISTORY;
+  humid_index = (humid_index + 1) % GRAPH_HISTORY;
 }
 /* USER CODE END 0 */
 
@@ -162,7 +170,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -171,14 +178,12 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -193,7 +198,6 @@ int main(void)
   RGB_Init();
   DHT22_Init(&htim3);
   FAN_Init();
-  
 
   // TODO: Remove when done debugging
   uint8_t found_devices = 0;
@@ -241,30 +245,33 @@ int main(void)
     uint32_t current_time = HAL_GetTick();
 
     DHT22_ReadData(&temperature, &humidity);
-
-    if (temperature > alert__temp_threshold) {
-        alert_condition = 1;
-        fan_status = 1;
-        FAN_setSpeed(1);
+    // handle data collection 
+    if (current_time - last_data_collection >= DATA_COLLECTION_INERVAL) {
+        collectSensorData(temperature, humidity);
+        last_data_collection = current_time;
+    }
+    // handle blinking
+    if (current_time - last_blink_time >= BLINK_INTERVAL) {
+        blink_state = !blink_state;
+        last_blink_time = current_time;
+    }
+    // alert states
+    if (temperature > ALERT_TEMPERATURE_THRESHOLD && humidity > ALERT_HUMIDITY_THRESHOLD) {
+        alert_condition = 3; // both
+        fan_status = 1; // turn on fan
+    } else if (temperature > ALERT_TEMPERATURE_THRESHOLD) {
+        alert_condition = 1; // temp
+        fan_status = 1; // turn on fan
+    } else if (humidity > ALERT_HUMIDITY_THRESHOLD) {
+        alert_condition = 2; // humidity
+        fan_status = 1; // turn on fan
     } else {
-        alert_condition = 0;
-        fan_status = 0;
-        FAN_setSpeed(0);
+        led_override = 0;
+        alert_condition = 0; // no alert
+        fan_status = 0; // turn off fan
     }
 
-    if (humidity > alert__humid_threshold) {
-        alert_condition = 2;
-        fan_status = 1;
-        FAN_setSpeed(1);
-    } else {
-        if (alert_condition != 1) { // only clear if not temp alert
-            alert_condition = 0;
-            fan_status = 0;
-            FAN_setSpeed(0);
-        }
-    }
-
-
+    // collect data in database
     if (current_time - last_serial_transmission >= SERIAL_INTERVAL) {
         if (temperature != -999.0f && humidity != -999.0f) {
             sendDataUART(temperature, humidity, fan_status, alert_condition);
@@ -272,25 +279,46 @@ int main(void)
         last_serial_transmission = current_time;
     }
 
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) == GPIO_PIN_RESET) {
+    // button advancing
+    if (HAL_GPIO_ReadPin(BUTTON_R_PORT, BUTTON_R_PIN) == GPIO_PIN_RESET) {
       screen++;
       if (screen > 4) {
         screen = 0;
       }
-    }
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_RESET) {
+    } 
+    if (HAL_GPIO_ReadPin(BUTTON_L_PORT, BUTTON_L_PIN) == GPIO_PIN_RESET) {
       screen--;
       if (screen > 4) {
         screen = 4;
       }
     }
 
-    if (alert_condition == 1) {
-      RGB_SetRGB(255, 0, 0); // red for temperature alerta
+    if ((HAL_GPIO_ReadPin(BUTTON_L_PORT, BUTTON_L_PIN) == GPIO_PIN_SET && HAL_GPIO_ReadPin(BUTTON_R_PORT, BUTTON_R_PIN) == GPIO_PIN_SET) && alert_condition > 0) {
+      led_override = 1; // turn off LED
+    }
+   
+    if (led_override == 1) {
+       RGB_Off();
     } else {
-      RGB_SetRGB(0, 255, 0); // green for normal
+      if (alert_condition > 0 && blink_state) {
+        // if (alert_condition == 3 && blink_state) {
+        // } else 
+        RGB_SetRGB(255, 0, 0); // red when blinking on
+      } else if (alert_condition > 0 && !blink_state) {
+        RGB_Off(); // off when blinking off
+      } else {
+        RGB_SetRGB(0, 255, 0); // green for normal
+      }
     }
 
+    // fan control
+    if (fan_status == 1) {
+      FAN_setSpeed(1); // full speed
+    } else {
+      FAN_setSpeed(0); // off
+    }
+
+    // screen displays
     if (screen == 0) {
       ssd1306_Fill(Black);
       ssd1306_SetCursor(0, 0);
@@ -298,28 +326,41 @@ int main(void)
 
       ssd1306_SetCursor(18, 0);
       ssd1306_WriteString("Current", Font_7x10, White);
-      if (temperature != -999.0f && humidity != -999.0f) {
         // use integers for display 
-        int temp_int = (int)temperature;
-        int temp_dec = (int)((temperature - temp_int) * 10);
-        int hum_int = (int)humidity;
-        int hum_dec = (int)((humidity - hum_int) * 10);
+      int temp_int = (int)temperature;
+      int temp_dec = (int)((temperature - temp_int) * 10);
+      int hum_int = (int)humidity;
+      int hum_dec = (int)((humidity - hum_int) * 10);
 
-        ssd1306_SetCursor(0, 15);
+      ssd1306_SetCursor(0, 15);
+      if ((alert_condition == 1 || alert_condition == 3) && blink_state) {
+        sprintf(buffer, "!TEMP: %d.%dC!", temp_int, temp_dec);
+      } else {
         sprintf(buffer, "Temp: %d.%dC", temp_int, temp_dec);
-        ssd1306_WriteString(buffer, Font_7x10, White);
-        
-        ssd1306_SetCursor(0, 30);
-        sprintf(buffer, "Humid: %d.%d%%", hum_int, hum_dec);
-        ssd1306_WriteString(buffer, Font_7x10, White);
-
-        ssd1306_SetCursor(0, 45);
-        sprintf(buffer, "Fan: %d RPM", fan_speed);
-        ssd1306_WriteString(buffer, Font_6x8, White);
       }
+      // sprintf(buffer, "Temp: %d.%dC", temp_int, temp_dec);
+      ssd1306_WriteString(buffer, Font_7x10, White);
+      
+      ssd1306_SetCursor(0, 30);
+      if ((alert_condition == 2 || alert_condition == 3) && blink_state) {
+          sprintf(buffer, "!HUMID: %d.%d%%!", hum_int, hum_dec);
+      } else {
+          sprintf(buffer, "Humid: %d.%d%%", hum_int, hum_dec);
+      }
+      // sprintf(buffer, "Humid: %d.%d%%", hum_int, hum_dec);
+      ssd1306_WriteString(buffer, Font_7x10, White);
+
+      ssd1306_SetCursor(0, 45);
+      if (fan_status == 1) {
+        sprintf(buffer, "Fan: ON");
+      } else {
+        sprintf(buffer, "Fan: OFF");
+      }
+      // sprintf(buffer, "Fan: %d", fan_speed);
+      ssd1306_WriteString(buffer, Font_6x8, White);
     } else if (screen == 2) {
-      temp_history[history_index] = temperature;
-      history_index = (history_index + 1) % GRAPH_HISTORY;
+      // temp_history[temp_index] = temperature;
+      // temp_index = (temp_index + 1) % GRAPH_HISTORY;
       
       ssd1306_Fill(Black);
       
@@ -330,12 +371,17 @@ int main(void)
       drawLineGraph(temp_history, GRAPH_HISTORY, 12, 50, 10.0f, 40.0f);
       int temp_int = (int)temperature;
       int temp_dec = (int)((temperature - temp_int) * 10);
-      ssd1306_SetCursor(100, 0);
-      sprintf(buffer, "%d.%d%%", temp_int, temp_dec);
+      ssd1306_SetCursor(90, 0);
+      if ((alert_condition == 1 || alert_condition == 3) && blink_state) {
+          sprintf(buffer, "!%d.%d!", temp_int, temp_dec);
+      } else {
+          sprintf(buffer, "%d.%d", temp_int, temp_dec);
+      }
+      // sprintf(buffer, "%d.%d%%", temp_int, temp_dec);
       ssd1306_WriteString(buffer, Font_6x8, White);
     } else if (screen == 3) {
-      humid_history[humid_index] = humidity;
-      humid_index = (humid_index + 1) % GRAPH_HISTORY;
+      // humid_history[humid_index] = humidity;
+      // humid_index = (humid_index + 1) % GRAPH_HISTORY;
       
       ssd1306_Fill(Black);
       
@@ -345,11 +391,16 @@ int main(void)
       ssd1306_SetCursor(18, 0);
       ssd1306_WriteString("Humid (%)", Font_7x10, White);
       drawLineGraph(humid_history, GRAPH_HISTORY, 12, 50, 0.0f, 100.0f);
-        int hum_int = (int)humidity;
-        int hum_dec = (int)((humidity - hum_int) * 10);
+      int hum_int = (int)humidity;
+      int hum_dec = (int)((humidity - hum_int) * 10);
 
-      ssd1306_SetCursor(100, 0);
-      sprintf(buffer, "%d.%d%%", hum_int, hum_dec);
+      ssd1306_SetCursor(90, 0);
+      if ((alert_condition == 2 || alert_condition == 3) && blink_state) {
+          sprintf(buffer, "!%d.%d!", hum_int, hum_dec);
+      } else {
+          sprintf(buffer, "%d.%d", hum_int, hum_dec);
+      }
+      // sprintf(buffer, "%d.%d%%", hum_int, hum_dec);
       ssd1306_WriteString(buffer, Font_6x8, White);
     } else if (screen == 4) {
       ssd1306_Fill(Black);
@@ -429,11 +480,9 @@ static void MX_I2C1_Init(void)
 {
 
   /* USER CODE BEGIN I2C1_Init 0 */
-
   /* USER CODE END I2C1_Init 0 */
 
   /* USER CODE BEGIN I2C1_Init 1 */
-
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 100000;
@@ -449,7 +498,6 @@ static void MX_I2C1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN I2C1_Init 2 */
-
   /* USER CODE END I2C1_Init 2 */
 
 }
@@ -463,14 +511,12 @@ static void MX_TIM3_Init(void)
 {
 
   /* USER CODE BEGIN TIM3_Init 0 */
-
   /* USER CODE END TIM3_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM3_Init 1 */
-
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 31;
@@ -494,7 +540,6 @@ static void MX_TIM3_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM3_Init 2 */
-
   /* USER CODE END TIM3_Init 2 */
 
 }
@@ -508,11 +553,9 @@ static void MX_USART2_UART_Init(void)
 {
 
   /* USER CODE BEGIN USART2_Init 0 */
-
   /* USER CODE END USART2_Init 0 */
 
   /* USER CODE BEGIN USART2_Init 1 */
-
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
@@ -527,7 +570,6 @@ static void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
-
   /* USER CODE END USART2_Init 2 */
 
 }
@@ -541,7 +583,6 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
-
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
@@ -551,14 +592,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8
-                          |GPIO_PIN_9, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5|GPIO_PIN_6, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10|GPIO_PIN_4|GPIO_PIN_6, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10|GPIO_PIN_3|GPIO_PIN_5|GPIO_PIN_6, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -566,46 +603,38 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA5 PA6 PA7 PA9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_9;
+  /*Configure GPIO pin : PA5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB10 PB4 PB6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_4|GPIO_PIN_6;
+  /*Configure GPIO pins : PB10 PB3 PB5 PB6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_3|GPIO_PIN_5|GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PC7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA8 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  /*Configure GPIO pins : PA8 PA9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;        // Alternate Function Open Drain
-  GPIO_InitStruct.Pull = GPIO_NOPULL;            // External pull-ups (you have 5k)
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;     // I2C1 alternate function
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
 /* USER CODE END 4 */
 
 /**
@@ -615,11 +644,6 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
@@ -633,8 +657,6 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

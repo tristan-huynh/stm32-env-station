@@ -67,11 +67,16 @@ void Error_Handler(void);
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
 #define TCK_GPIO_Port GPIOA
-#define SWO_Pin GPIO_PIN_3
-#define SWO_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-
+// #define BUTTON_L_PORT GPIOB
+// #define BUTTON_L_PIN GPIO_PIN_3  // D3
+// #define BUTTON_R_PORT GPIOB
+// #define BUTTON_R_PIN GPIO_PIN_5  // D4
+#define BUTTON_L_PORT GPIOA
+#define BUTTON_L_PIN GPIO_PIN_9  // D8
+#define BUTTON_R_PORT GPIOA
+#define BUTTON_R_PIN GPIO_PIN_8  // D7
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
