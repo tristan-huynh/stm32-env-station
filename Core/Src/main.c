@@ -1,4 +1,5 @@
 /* USER CODE BEGIN Header */
+// @author Tristan Huynh
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -63,7 +64,7 @@ uint8_t blink_state = 0;
 
 uint8_t led_override = 0; // 0 = normal, 1 = force off
 
-
+volatile  uint8_t screen = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -229,7 +230,7 @@ int main(void)
 
   // HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);   // EN = HIGH PA11
 
-  uint8_t screen = 0;
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -280,18 +281,18 @@ int main(void)
     }
 
     // button advancing
-    if (HAL_GPIO_ReadPin(BUTTON_R_PORT, BUTTON_R_PIN) == GPIO_PIN_RESET) {
-      screen++;
-      if (screen > 4) {
-        screen = 0;
-      }
-    } 
-    if (HAL_GPIO_ReadPin(BUTTON_L_PORT, BUTTON_L_PIN) == GPIO_PIN_RESET) {
-      screen--;
-      if (screen > 4) {
-        screen = 4;
-      }
-    }
+    // if (HAL_GPIO_ReadPin(BUTTON_R_PORT, BUTTON_R_PIN) == GPIO_PIN_RESET) {
+    //   screen++;
+    //   if (screen > 4) {
+    //     screen = 0;
+    //   }
+    // } 
+    // if (HAL_GPIO_ReadPin(BUTTON_L_PORT, BUTTON_L_PIN) == GPIO_PIN_RESET) {
+    //   screen--;
+    //   if (screen > 4) {
+    //     screen = 4;
+    //   }
+    // }
 
     if ((HAL_GPIO_ReadPin(BUTTON_L_PORT, BUTTON_L_PIN) == GPIO_PIN_SET && HAL_GPIO_ReadPin(BUTTON_R_PORT, BUTTON_R_PIN) == GPIO_PIN_SET) && alert_condition > 0) {
       led_override = 1; // turn off LED
@@ -626,15 +627,38 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pins : PA8 PA9 */
   GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == BUTTON_R_PIN) {
+    // Right button pressed - advance screen
+    screen++;
+    if (screen > 4) {
+      screen = 0;
+    }
+  }
+  else if (GPIO_Pin == BUTTON_L_PIN) {
+    // Left button pressed - go back screen
+    screen--;
+    if (screen > 4) {  // Underflow check (since screen is uint8_t)
+      screen = 4;
+    }
+  }
+}
 /* USER CODE END 4 */
 
 /**
